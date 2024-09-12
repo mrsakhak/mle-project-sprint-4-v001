@@ -10,6 +10,10 @@ import pandas
 from dotenv import load_dotenv
 load_dotenv()
 
+S3_BUCKET_NAME = 's3-student-mle-20240522-d840b46cf7'
+ENDPOINT_URL = 'https://storage.yandexcloud.net'
+IP_PORT = '84.252.142.60:8081'
+
 
 def load_df_from_s3(key: str):
     '''Скачивание из s3 и перевод в pandas.DataFrame. Формат в котором должен храниться файл - parquet
@@ -20,8 +24,6 @@ def load_df_from_s3(key: str):
     Returns:
         df: данные в формате pandas.DataFrame
     '''
-    S3_BUCKET_NAME = 's3-student-mle-20240522-d840b46cf7'
-    ENDPOINT_URL = 'https://storage.yandexcloud.net'
 
     s3_resource = boto3.resource('s3',
         endpoint_url=ENDPOINT_URL,
@@ -62,7 +64,7 @@ def make_one_rec(new_user_prob=0.1, with_no_item_prob=0.1):
     else:
         item_id = random.choice(items_list)
     
-    response = requests.post(f'http://84.252.142.60:8081/get_rec?user_id={user_id}&item_id={item_id}')
+    response = requests.post(f'http://{IP_PORT}/get_rec?user_id={user_id}&item_id={item_id}')
     return response
 
 

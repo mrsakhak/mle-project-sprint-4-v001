@@ -26,9 +26,8 @@ def read_root() -> dict:
 
 
 @app.post('/get_rec') 
-def get_prediction_for_item(user_id: int, item_id: int):
-    """Функция для получения вероятности оттока пользователя, вероятность "target"==1
-
+def get_rec(user_id: int, item_id: int):
+    """Функция для получения предсказаний как от пользователя (item_id = -1) так и от пользователя в зависимости от того какой трек он слушает 
     Args:
         user_id (int): Идентификатор пользователя.
         item_id (int): Идентификатор трека.

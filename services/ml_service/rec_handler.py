@@ -9,8 +9,8 @@ import pandas
 
 load_dotenv()
 
-S3_BUCKET_NAME = 's3-student-mle-20240522-d840b46cf7'
-ENDPOINT_URL = 'https://storage.yandexcloud.net'
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME')
+ENDPOINT_URL = os.environ.get('ENDPOINT_URL')
 
 s3_resource = boto3.resource('s3',
     endpoint_url=ENDPOINT_URL,
@@ -18,8 +18,9 @@ s3_resource = boto3.resource('s3',
     aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
 )
 
-class FastApiHandler:
-    """Класс FastApiHandler, который обрабатывает запрос и возвращает предсказание."""
+
+class RecLoadData:
+    """Класс RecLoadData, который собирает данные из s3 необходимые для работы рекомендательной системы"""
 
     def __init__(self):
         """Инициализация переменных класса."""
@@ -32,10 +33,27 @@ class FastApiHandler:
         self.rank_feature_item = self.load_df_from_s3('recsys/recommendations/rank_features/item.parquet').set_index('item_id')
         self.rank_feature_user_item = self.load_df_from_s3('recsys/recommendations/rank_features/user_item.parquet').set_index(['user_id', 'item_id'])
         
+        # дефолтные значения параметров
+        self.rank_feature_default = self.load_dict_from_s3('recsys/recommendations/rank_features/default_params.dict')
+        
         # различные рекомендации
         self.pop_rec = self.load_df_from_s3('recsys/recommendations/top_popular.parquet').head(2000)
         self.als_rec = self.load_df_from_s3('recsys/recommendations/personal_als.parquet').set_index('user_id')
         self.sim_items = self.load_df_from_s3('recsys/recommendations/similar.parquet').set_index('item_id')
+
+    def load_from_s3(self, key: str):
+        '''Скачивание из s3 данные по ключу
+
+        Args:
+            key (ыек): ключ в s3
+        
+        Returns:
+            buffer (BytesIO): данные из s3
+        '''
+        buffer = BytesIO()
+        s3_object = s3_resource.Object(S3_BUCKET_NAME, key)
+        s3_object.download_fileobj(buffer)
+        return buffer
 
     def load_df_from_s3(self, key: str):
         '''Скачивание из s3 и перевод в pandas.DataFrame. Формат в котором должен храниться файл - parquet
@@ -47,15 +65,19 @@ class FastApiHandler:
             df: данные в формате pandas.DataFrame
         '''
         try:
-            parquet_buffer = BytesIO()
-            s3_object = s3_resource.Object(S3_BUCKET_NAME, key)
-            s3_object.download_fileobj(parquet_buffer)
-            df = pandas.read_parquet(parquet_buffer)
-            return df
-        
+            parquet_buffer = self.load_from_s3(key)
         except Exception as e:
-            print(f'Failed to load DataFrame: {e}')
-
+            print(f'Failed to load DataFrame: Cannot download')
+            return None
+    
+        try:
+            df = pandas.read_parquet(parquet_buffer)
+        except Exception as e:
+            print(f'Failed to load DataFrame: Cannot tranform to DataFrame')
+            return None
+    
+        return df
+        
     def load_model_from_s3(self, key: str):
         '''Функция для скачивания модели
 
@@ -66,14 +88,43 @@ class FastApiHandler:
             model (model.pkl)
         '''
         try:
-            buffer = BytesIO()
-            s3_object = s3_resource.Object(S3_BUCKET_NAME, key)
-            s3_object.download_fileobj(buffer)
-            buffer.seek(0)
-            return pickle.load(buffer)
-
+            model_buffer = self.load_from_s3(key)
         except Exception as e:
-            print(f'Failed to load model: {e}')
+            print(f'Failed to load model: Cannot download')
+            return None
+        
+        try:
+            model_buffer.seek(0)
+            return pickle.load(model_buffer)
+        except Exception as e:
+            print(f'Failed to load model: Cannot tranform to DataFrame')
+
+    def load_dict_from_s3(self, key: str):
+        '''Функция для скачивания справочника
+
+        Args:
+            key: ключ в s3
+        
+        Returns:
+            dict: 
+        '''
+        try:
+            dict_buffer = self.load_from_s3(key)
+        except Exception as e:
+            print(f'Failed to load model: Cannot download')
+            return None
+        
+        try:
+            dict_buffer.seek(0)
+            return pickle.load(dict_buffer)
+        except Exception as e:
+            print(f'Failed to load model: Cannot tranform to DataFrame')
+
+
+class FastApiHandler(RecLoadData):
+    """Класс FastApiHandler, который обрабатывает запрос и возвращает предсказание. Данные для работы наследует из RecLoadData"""
+    def __init__(self):
+        RecLoadData.__init__(self)
 
     def get_pop_rec(self, top_n: int = 10):
         '''Получение рекомендации по принципу самые популярные треки
@@ -146,13 +197,7 @@ class FastApiHandler:
             params (dict): список рекомендации
         '''        
         # изначально в params значения, которыми при обучении модели заполняли пропуски
-        params = {
-            'als_score': 0,
-            'name_len': 0,
-            'main_genre': 0,
-            'top_num': 99999,
-            'count': 0
-        }
+        params = self.rank_feature_default.copy()
         if user_id in self.rank_feature_user.index:
             feature_user = self.rank_feature_user.loc[user_id]
             params['main_genre'] = feature_user.loc['main_genre']
@@ -165,7 +210,6 @@ class FastApiHandler:
             feature_user_item = self.rank_feature_user_item.loc[user_id, item_id]
             params['als_score'] = feature_user_item.loc['als_score']
         return params
-
 
     def rank_rec(self, user_id: int, rec_list: list):
         '''Для пользователя и списка возможных рекомендации получаем список значений для ранжирования
